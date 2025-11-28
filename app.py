@@ -106,7 +106,9 @@ if res and res["coords"] == st.session_state["click_coords"]:
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.header("Settings")
-    walk_time = st.slider("Walking Time (minutes)", 1, 15, 10)
+    walk_time = st.slider(
+        "Walking time in minutes, assuming a speed of 4.5 km/h.", 1, 15, 10
+    )
 
     st.divider()
     st.header("Filters")
@@ -120,7 +122,7 @@ with st.sidebar:
             selection_mode="multi",
         )
     else:
-        st.info("Filters will appear after the analysis is complete.")
+        st.info("Filters will appear here after you click the map.")
         selected_layers = []
 
 # --- 6. MAIN LAYOUT ---
@@ -214,7 +216,6 @@ with col_map:
 
     # Initialize map
     m = folium.Map(location=map_center, zoom_start=15, tiles=None)
-
     folium.TileLayer(tiles="OpenStreetMap", name="Street Map", control=True).add_to(m)
     folium.TileLayer(tiles="CartoDB positron", name="Light Map", control=True).add_to(m)
     folium.TileLayer(tiles="CartoDB dark_matter", name="Dark Map", control=True).add_to(
@@ -260,34 +261,35 @@ with col_map:
             name="Walking Network",
         ).add_to(m)
 
-        # Amenities
-        fg = folium.FeatureGroup(name="Amenities")
-        final_filtered_data = pois_data[
-            pois_data["main_category"].isin(selected_layers)
-        ]
-        for idx, row in final_filtered_data.iterrows():
-            if row.geometry.geom_type == "Point":
-                loc = [row.geometry.y, row.geometry.x]
-            else:
-                loc = [row.geometry.centroid.y, row.geometry.centroid.x]
-            cat = row["main_category"]
-            color = color_map.get(cat, "gray")
-            radius = 7 if "Train" in cat else 5
-            folium.CircleMarker(
-                loc,
-                radius=radius,
-                color=color,
-                weight=0.5,
-                fill=True,
-                fill_color=color,
-                fill_opacity=1,
-                popup=row["display_name"],
-            ).add_to(fg)
-        fg.add_to(m)
+        # --- FIX: Only try to map amenities if amenities actually exist ---
+        if not pois_data.empty:
+            fg = folium.FeatureGroup(name="Amenities")
+            final_filtered_data = pois_data[
+                pois_data["main_category"].isin(selected_layers)
+            ]
+            for idx, row in final_filtered_data.iterrows():
+                if row.geometry.geom_type == "Point":
+                    loc = [row.geometry.y, row.geometry.x]
+                else:
+                    loc = [row.geometry.centroid.y, row.geometry.centroid.x]
+                cat = row["main_category"]
+                color = color_map.get(cat, "gray")
+                radius = 7 if "Train" in cat else 5
+                folium.CircleMarker(
+                    loc,
+                    radius=radius,
+                    color=color,
+                    weight=0.5,
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=1,
+                    popup=row["display_name"],
+                ).add_to(fg)
+            fg.add_to(m)
 
     folium.LayerControl(position="topright").add_to(m)
 
-    output = st_folium(m, height=750, width=None, returned_objects=["last_clicked"])
+    output = st_folium(m, height=700, width=None, returned_objects=["last_clicked"])
 
     # Handle Clicks
     if output["last_clicked"]:
@@ -322,10 +324,8 @@ with col_map:
                 }
                 pois = get_amenities(query_poly, tags, lat, lon)
 
-                # --- NEW FILTERING LOGIC ---
-                # Check if amenities are strictly inside the polygon
+                # Filter amenities to be strictly inside the polygon
                 if pois is not None and not pois.empty:
-                    # Filter: Keep only points whose centroids are within the query polygon
                     pois = pois[pois.geometry.centroid.within(query_poly)]
 
                 st.session_state["analysis_results"] = {
