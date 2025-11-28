@@ -40,7 +40,6 @@ def calculate_isochrone_network(lat, lon, walk_time_min, speed_kph=4.5):
     nodes_gdf = nodes_gdf.to_crs(epsg=4326)
     edges_gdf = edges_gdf.to_crs(epsg=4326)
 
-    # Union all nodes to create the polygon hull
     query_polygon = nodes_gdf.union_all().convex_hull
 
     return edges_gdf, query_polygon
@@ -55,15 +54,18 @@ if "trigger_calc" not in st.session_state:
     st.session_state["trigger_calc"] = False
 
 # --- 3. GLOBAL VARIABLES ---
+# Updated Color Map for New Categories
 color_map = {
-    "Office": "#7F8C8D",
-    "Healthcare": "#C0392B",
-    "Transit (Train/Rail)": "#8E44AD",
-    "Transit (Bus/Other)": "#F39C12",
-    "Shop": "#E84393",
-    "Leisure/Sport": "#27AE60",
-    "Tourism": "#D35400",
-    "Others": "#16A085",
+    "Education": "#F1C40F",         # Gold/Yellow
+    "Worship": "#9B59B6",           # Purple
+    "Grocery": "#2ECC71",           # Emerald Green
+    "Healthcare": "#E74C3C",        # Red
+    "Office": "#95A5A6",            # Grey
+    "Transit (Train/Rail)": "#34495E", # Dark Blue/Slate
+    "Transit (Bus/Other)": "#E67E22",  # Orange
+    "Leisure/Sport": "#1ABC9C",     # Teal
+    "Tourism": "#D35400",           # Burnt Orange
+    "Others": "#3498DB",            # Blue
 }
 
 # --- 4. PREPARE DATA ---
@@ -77,38 +79,57 @@ if res and res["coords"] == st.session_state["click_coords"]:
     raw_pois = res["pois"]
     if raw_pois is not None and not raw_pois.empty:
 
+        # --- UPDATED CLASSIFICATION LOGIC ---
         def classify_poi(row):
-            if pd.notna(row.get("railway")):
-                return "Transit (Train/Rail)"
-            if (
-                pd.notna(row.get("public_transport"))
-                or row.get("highway") == "bus_stop"
-            ):
-                return "Transit (Bus/Other)"
-            if pd.notna(row.get("office")):
-                return "Office"
-            if pd.notna(row.get("healthcare")):
+            amenity = row.get("amenity")
+            shop = row.get("shop")
+            railway = row.get("railway")
+            
+            # 1. Transit
+            if pd.notna(railway): return "Transit (Train/Rail)"
+            if pd.notna(row.get("public_transport")) or row.get("highway") == "bus_stop": return "Transit (Bus/Other)"
+            
+            # 2. Education (New)
+            if amenity in ['school', 'university', 'college', 'kindergarten', 'language_school']:
+                return "Education"
+            
+            # 3. Worship (New)
+            if amenity == 'place_of_worship':
+                return "Worship"
+            
+            # 4. Healthcare
+            if amenity in ['clinic', 'hospital', 'pharmacy', 'doctors', 'dentist']:
                 return "Healthcare"
-            if pd.notna(row.get("shop")):
-                return "Shop"
-            if pd.notna(row.get("leisure")) or pd.notna(row.get("sport")):
-                return "Leisure/Sport"
-            if pd.notna(row.get("tourism")):
-                return "Tourism"
+            if pd.notna(row.get("healthcare")): return "Healthcare"
+
+            # 5. Grocery (Replaces general Shop)
+            # We check for specific food-related retail
+            if shop in ['supermarket', 'convenience', 'greengrocer', 'bakery', 'market']:
+                return "Grocery"
+            
+            # 6. Leisure/Sport
+            if pd.notna(row.get("leisure")) or pd.notna(row.get("sport")): return "Leisure/Sport"
+            
+            # 7. Tourism
+            if pd.notna(row.get("tourism")): return "Tourism"
+            
+            # 8. Office
+            if pd.notna(row.get("office")): return "Office"
+            
+            # 9. Fallback
             return "Others"
 
         raw_pois["main_category"] = raw_pois.apply(classify_poi, axis=1)
         raw_pois["display_name"] = (
-            raw_pois["main_category"] + ": " + raw_pois["amenity"].fillna("Location")
+            raw_pois["main_category"] + ": " + 
+            raw_pois["amenity"].fillna(raw_pois["shop"]).fillna("Location")
         )
         pois_data = raw_pois
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.header("Settings")
-    walk_time = st.slider(
-        "Walking Time (minutes) at 4.5 km/h.", 1, 15, 10
-    )
+    walk_time = st.slider("Walking Time (minutes) at 4.5 km/h", 1, 15, 10)
 
     st.divider()
     st.header("Filters")
@@ -122,7 +143,7 @@ with st.sidebar:
             selection_mode="multi",
         )
     else:
-        st.info("Filters will appear here after you click the map.")
+        st.info("Filters will appear after the analysis is complete.")
         selected_layers = []
 
 # --- 6. MAIN LAYOUT ---
@@ -132,21 +153,15 @@ col_map, col_dash = st.columns([3, 2])
 
 # --- RIGHT COLUMN (DASHBOARD) ---
 with col_dash:
-
-    # SCENARIO 1: Clicked, not analyzed
+    
     if st.session_state["click_coords"] and not has_data:
         st.subheader("📍 Location Selected")
-        st.info(
-            f"Coordinates: {st.session_state['click_coords'][0]:.4f}, {st.session_state['click_coords'][1]:.4f}"
-        )
-
+        st.info(f"Coordinates: {st.session_state['click_coords'][0]:.4f}, {st.session_state['click_coords'][1]:.4f}")
         st.markdown("Click the button below to generate the isochrone.")
-
         if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
-            st.session_state["trigger_calc"] = True
+            st.session_state["trigger_calc"] = True 
             st.rerun()
 
-    # SCENARIO 2: Analysis Complete
     elif has_data:
         st.subheader("📊 Amenities Breakdown")
 
@@ -166,8 +181,7 @@ with col_dash:
                     color=alt.Color(
                         "Category",
                         scale=alt.Scale(
-                            domain=list(color_map.keys()),
-                            range=list(color_map.values()),
+                            domain=list(color_map.keys()), range=list(color_map.values())
                         ),
                         legend=None,
                     ),
@@ -182,20 +196,18 @@ with col_dash:
         else:
             st.warning("No amenities found in this range.")
 
-        # Metrics
         st.divider()
         st.subheader("📏 Catchment Statistics")
         total_length_km = res["edges"]["length"].sum() / 1000
-
+        
         poly_gdf = gpd.GeoDataFrame(geometry=[res["polygon"]], crs="EPSG:4326")
         poly_utm = poly_gdf.to_crs(poly_gdf.estimate_utm_crs())
-        area_sq_km = poly_utm.area[0] / 1e6
-
+        area_sq_km = poly_utm.area[0] / 1e6 
+        
         m1, m2 = st.columns(2)
         m1.metric("Isochrone Area", f"{area_sq_km:.2f} km²")
         m2.metric("Street Network Length", f"{total_length_km:.2f} km")
 
-    # SCENARIO 3: No Click
     else:
         st.markdown(
             """
@@ -214,15 +226,13 @@ with col_map:
     else:
         map_center = [-6.1754, 106.8272]
 
-    # Initialize map
     m = folium.Map(location=map_center, zoom_start=15, tiles=None)
+
     folium.TileLayer(tiles="OpenStreetMap", name="Street Map", control=True).add_to(m)
     folium.TileLayer(tiles="CartoDB positron", name="Light Map", control=True).add_to(m)
-    folium.TileLayer(tiles="CartoDB dark_matter", name="Dark Map", control=True).add_to(
-        m
-    )
+    folium.TileLayer(tiles="CartoDB dark_matter", name="Dark Map", control=True).add_to(m)
+    
 
-    # Start Marker
     if st.session_state["click_coords"]:
         clat, clon = st.session_state["click_coords"]
         folium.Marker(
@@ -242,31 +252,21 @@ with col_map:
         ).add_to(m)
 
     if has_data:
-        # Polygon
         folium.GeoJson(
             res["polygon"],
-            style_function=lambda x: {
-                "fillColor": "#3498DB",
-                "color": "#3498DB",
-                "weight": 1,
-                "fillOpacity": 0.15,
-            },
+            style_function=lambda x: {"fillColor": "#3498DB", "color": "#3498DB", "weight": 1, "fillOpacity": 0.15},
             name="Catchment Area",
         ).add_to(m)
 
-        # Network
         folium.GeoJson(
             res["edges"],
             style_function=lambda x: {"color": "#3498DB", "weight": 2, "opacity": 0.8},
             name="Walking Network",
         ).add_to(m)
 
-        # --- FIX: Only try to map amenities if amenities actually exist ---
         if not pois_data.empty:
             fg = folium.FeatureGroup(name="Amenities")
-            final_filtered_data = pois_data[
-                pois_data["main_category"].isin(selected_layers)
-            ]
+            final_filtered_data = pois_data[pois_data["main_category"].isin(selected_layers)]
             for idx, row in final_filtered_data.iterrows():
                 if row.geometry.geom_type == "Point":
                     loc = [row.geometry.y, row.geometry.x]
@@ -275,69 +275,48 @@ with col_map:
                 cat = row["main_category"]
                 color = color_map.get(cat, "gray")
                 radius = 7 if "Train" in cat else 5
-                folium.CircleMarker(
-                    loc,
-                    radius=radius,
-                    color=color,
-                    weight=0.5,
-                    fill=True,
-                    fill_color=color,
-                    fill_opacity=1,
-                    popup=row["display_name"],
-                ).add_to(fg)
+                folium.CircleMarker(loc, radius=radius, color=color, weight=0.5, fill=True, fill_color=color, fill_opacity=1, popup=row["display_name"]).add_to(fg)
             fg.add_to(m)
 
     folium.LayerControl(position="topright").add_to(m)
-
+    
     output = st_folium(m, height=700, width=None, returned_objects=["last_clicked"])
 
-    # Handle Clicks
     if output["last_clicked"]:
         new_lat = output["last_clicked"]["lat"]
         new_lon = output["last_clicked"]["lng"]
         if st.session_state["click_coords"] != (new_lat, new_lon):
             st.session_state["click_coords"] = (new_lat, new_lon)
-            st.session_state["analysis_results"] = None
+            st.session_state["analysis_results"] = None 
             st.rerun()
 
-    # Trigger Calculation
     if st.session_state.get("trigger_calc", False):
         lat, lon = st.session_state["click_coords"]
-        st.session_state["trigger_calc"] = False
-
+        st.session_state["trigger_calc"] = False 
+        
         with st.status("⏳ Analyzing urban network...", expanded=True) as status:
             try:
                 st.write("Tracing street network...")
                 edges_gdf, query_poly = calculate_isochrone_network(lat, lon, walk_time)
                 st.write("Scanning amenities...")
+                # We fetch broadly (shop=True, amenity=True) then filter in Python
                 tags = {
-                    "amenity": True,
-                    "shop": True,
-                    "office": True,
-                    "leisure": True,
-                    "healthcare": True,
-                    "sport": True,
-                    "public_transport": True,
-                    "highway": "bus_stop",
+                    "amenity": True, "shop": True, "office": True,
+                    "leisure": True, "healthcare": True, "sport": True,
+                    "public_transport": True, "highway": "bus_stop",
                     "railway": ["station", "halt", "subway_entrance"],
                     "tourism": True,
                 }
                 pois = get_amenities(query_poly, tags, lat, lon)
-
-                # Filter amenities to be strictly inside the polygon
+                
                 if pois is not None and not pois.empty:
                     pois = pois[pois.geometry.centroid.within(query_poly)]
 
                 st.session_state["analysis_results"] = {
-                    "coords": (lat, lon),
-                    "walk_time": walk_time,
-                    "edges": edges_gdf,
-                    "pois": pois,
-                    "polygon": query_poly,
+                    "coords": (lat, lon), "walk_time": walk_time, "edges": edges_gdf, "pois": pois, "polygon": query_poly
                 }
                 status.update(label="✅ Complete!", state="complete", expanded=False)
                 st.rerun()
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
                 status.update(label="❌ Failed", state="error")
-
