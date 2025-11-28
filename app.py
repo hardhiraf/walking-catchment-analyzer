@@ -40,6 +40,7 @@ def calculate_isochrone_network(lat, lon, walk_time_min, speed_kph=4.5):
     nodes_gdf = nodes_gdf.to_crs(epsg=4326)
     edges_gdf = edges_gdf.to_crs(epsg=4326)
 
+    # Union all nodes to create the polygon hull
     query_polygon = nodes_gdf.union_all().convex_hull
 
     return edges_gdf, query_polygon
@@ -54,18 +55,18 @@ if "trigger_calc" not in st.session_state:
     st.session_state["trigger_calc"] = False
 
 # --- 3. GLOBAL VARIABLES ---
-# Updated Color Map for New Categories
 color_map = {
-    "Education": "#F1C40F",         # Gold/Yellow
-    "Worship": "#9B59B6",           # Purple
-    "Grocery": "#2ECC71",           # Emerald Green
-    "Healthcare": "#E74C3C",        # Red
-    "Office": "#95A5A6",            # Grey
-    "Transit (Train/Rail)": "#34495E", # Dark Blue/Slate
-    "Transit (Bus/Other)": "#E67E22",  # Orange
-    "Leisure/Sport": "#1ABC9C",     # Teal
-    "Tourism": "#D35400",           # Burnt Orange
-    "Others": "#3498DB",            # Blue
+    "Office": "#7F8C8D",
+    "Healthcare": "#C0392B",
+    "Transit (Train/Rail)": "#8E44AD",
+    "Transit (Bus/Other)": "#F39C12",
+    "Shop": "#E84393",
+    "Leisure/Sport": "#27AE60",
+    "Tourism": "#D35400",
+    "Education": "#F1C40F",
+    "Worship": "#9B59B6",
+    "Grocery": "#2ECC71",
+    "Others": "#16A085",
 }
 
 # --- 4. PREPARE DATA ---
@@ -79,51 +80,33 @@ if res and res["coords"] == st.session_state["click_coords"]:
     raw_pois = res["pois"]
     if raw_pois is not None and not raw_pois.empty:
 
-        # --- UPDATED CLASSIFICATION LOGIC ---
         def classify_poi(row):
             amenity = row.get("amenity")
             shop = row.get("shop")
             railway = row.get("railway")
             
-            # 1. Transit
             if pd.notna(railway): return "Transit (Train/Rail)"
             if pd.notna(row.get("public_transport")) or row.get("highway") == "bus_stop": return "Transit (Bus/Other)"
             
-            # 2. Education (New)
             if amenity in ['school', 'university', 'college', 'kindergarten', 'language_school']:
                 return "Education"
-            
-            # 3. Worship (New)
             if amenity == 'place_of_worship':
                 return "Worship"
-            
-            # 4. Healthcare
             if amenity in ['clinic', 'hospital', 'pharmacy', 'doctors', 'dentist']:
                 return "Healthcare"
             if pd.notna(row.get("healthcare")): return "Healthcare"
-
-            # 5. Grocery (Replaces general Shop)
-            # We check for specific food-related retail
+            
             if shop in ['supermarket', 'convenience', 'greengrocer', 'bakery', 'market']:
                 return "Grocery"
             
-            # 6. Leisure/Sport
             if pd.notna(row.get("leisure")) or pd.notna(row.get("sport")): return "Leisure/Sport"
-            
-            # 7. Tourism
             if pd.notna(row.get("tourism")): return "Tourism"
-            
-            # 8. Office
             if pd.notna(row.get("office")): return "Office"
             
-            # 9. Fallback
             return "Others"
 
         raw_pois["main_category"] = raw_pois.apply(classify_poi, axis=1)
-        raw_pois["display_name"] = (
-            raw_pois["main_category"] + ": " + 
-            raw_pois["amenity"].fillna(raw_pois["shop"]).fillna("Location")
-        )
+        raw_pois["display_name"] = raw_pois["main_category"] + ": " + raw_pois["amenity"].fillna("Location")
         pois_data = raw_pois
 
 # --- 5. SIDEBAR ---
@@ -136,11 +119,25 @@ with st.sidebar:
 
     if has_data and not pois_data.empty:
         available_cats = sorted(pois_data["main_category"].unique().astype(str))
+        
+        # --- SELECT/DESELECT BUTTONS ---
+        col1, col2 = st.columns(2)
+        if col1.button("Select All", use_container_width=True):
+            st.session_state["selected_layers"] = available_cats
+            st.rerun()
+        
+        if col2.button("Deselect All", use_container_width=True):
+            st.session_state["selected_layers"] = []
+            st.rerun()
+
+        # The Widget
+        # key="selected_layers" connects this widget to session state
         selected_layers = st.pills(
             "Toggle Categories:",
             options=available_cats,
-            default=available_cats,
+            default=available_cats, # Default to all if no state exists
             selection_mode="multi",
+            key="selected_layers" 
         )
     else:
         st.info("Filters will appear after the analysis is complete.")
@@ -166,6 +163,7 @@ with col_dash:
         st.subheader("📊 Amenities Breakdown")
 
         if not pois_data.empty:
+            # Filter Data
             chart_source = pois_data[pois_data["main_category"].isin(selected_layers)]
 
             if not chart_source.empty:
@@ -192,7 +190,7 @@ with col_dash:
                 final_chart = (bars + text).properties(height=350)
                 st.altair_chart(final_chart, width="stretch")
             else:
-                st.warning("No categories selected.")
+                st.warning("No categories selected. Click 'Select All' in the sidebar.")
         else:
             st.warning("No amenities found in this range.")
 
@@ -299,7 +297,6 @@ with col_map:
                 st.write("Tracing street network...")
                 edges_gdf, query_poly = calculate_isochrone_network(lat, lon, walk_time)
                 st.write("Scanning amenities...")
-                # We fetch broadly (shop=True, amenity=True) then filter in Python
                 tags = {
                     "amenity": True, "shop": True, "office": True,
                     "leisure": True, "healthcare": True, "sport": True,
@@ -311,6 +308,12 @@ with col_map:
                 
                 if pois is not None and not pois.empty:
                     pois = pois[pois.geometry.centroid.within(query_poly)]
+                    
+                    # --- CRITICAL FIX ---
+                    # When a new analysis finishes, FORCE the session state key for filters to be removed.
+                    # This forces Streamlit to re-initialize the widget using the 'default' (which is All Categories).
+                    if "selected_layers" in st.session_state:
+                        del st.session_state["selected_layers"]
 
                 st.session_state["analysis_results"] = {
                     "coords": (lat, lon), "walk_time": walk_time, "edges": edges_gdf, "pois": pois, "polygon": query_poly
