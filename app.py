@@ -121,7 +121,7 @@ with st.sidebar:
             selection_mode="multi",
         )
     else:
-        st.info("Filters will appear here after you click the map.")
+        st.info("Filters will appear after the analysis is complete.")
         selected_layers = []
 
 # --- 6. MAIN LAYOUT ---
@@ -339,4 +339,5 @@ with col_map:
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
                 status.update(label="❌ Failed", state="error")
+
 
