@@ -291,7 +291,7 @@ with col_map:
     folium.LayerControl(position="topright").add_to(m)
 
     # Render Map
-    output = st_folium(m, height=800, width=None, returned_objects=["last_clicked"])
+    output = st_folium(m, height=750, width=None, returned_objects=["last_clicked"])
 
     # Handle Clicks
     if output["last_clicked"]:
@@ -339,3 +339,4 @@ with col_map:
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
                 status.update(label="❌ Failed", state="error")
+
