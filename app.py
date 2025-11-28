@@ -7,6 +7,7 @@ import networkx as nx
 import pandas as pd
 import geopandas as gpd
 import altair as alt
+import warnings
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Walking Catchment Analyzer")
@@ -120,7 +121,7 @@ with st.sidebar:
     if has_data and not pois_data.empty:
         available_cats = sorted(pois_data["main_category"].unique().astype(str))
         
-        # --- SELECT/DESELECT BUTTONS ---
+        # --- BUTTONS ---
         col1, col2 = st.columns(2)
         if col1.button("Select All", use_container_width=True):
             st.session_state["selected_layers"] = available_cats
@@ -130,14 +131,17 @@ with st.sidebar:
             st.session_state["selected_layers"] = []
             st.rerun()
 
-        # The Widget
-        # key="selected_layers" connects this widget to session state
+        # --- FIX FOR WARNING ---
+        # 1. Initialize the state if it doesn't exist
+        if "selected_layers" not in st.session_state:
+            st.session_state["selected_layers"] = available_cats
+            
+        # 2. Create widget WITHOUT default argument
         selected_layers = st.pills(
             "Toggle Categories:",
             options=available_cats,
-            default=available_cats, # Default to all if no state exists
             selection_mode="multi",
-            key="selected_layers" 
+            key="selected_layers"  # Reads value from session state automatically
         )
     else:
         st.info("Filters will appear after the analysis is complete.")
@@ -198,9 +202,12 @@ with col_dash:
         st.subheader("📏 Catchment Statistics")
         total_length_km = res["edges"]["length"].sum() / 1000
         
-        poly_gdf = gpd.GeoDataFrame(geometry=[res["polygon"]], crs="EPSG:4326")
-        poly_utm = poly_gdf.to_crs(poly_gdf.estimate_utm_crs())
-        area_sq_km = poly_utm.area[0] / 1e6 
+        # Suppress area warning for dashboard metrics
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            poly_gdf = gpd.GeoDataFrame(geometry=[res["polygon"]], crs="EPSG:4326")
+            poly_utm = poly_gdf.to_crs(poly_gdf.estimate_utm_crs())
+            area_sq_km = poly_utm.area[0] / 1e6 
         
         m1, m2 = st.columns(2)
         m1.metric("Isochrone Area", f"{area_sq_km:.2f} km²")
@@ -269,7 +276,10 @@ with col_map:
                 if row.geometry.geom_type == "Point":
                     loc = [row.geometry.y, row.geometry.x]
                 else:
-                    loc = [row.geometry.centroid.y, row.geometry.centroid.x]
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        loc = [row.geometry.centroid.y, row.geometry.centroid.x]
+                        
                 cat = row["main_category"]
                 color = color_map.get(cat, "gray")
                 radius = 7 if "Train" in cat else 5
@@ -307,11 +317,11 @@ with col_map:
                 pois = get_amenities(query_poly, tags, lat, lon)
                 
                 if pois is not None and not pois.empty:
-                    pois = pois[pois.geometry.centroid.within(query_poly)]
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        pois = pois[pois.geometry.centroid.within(query_poly)]
                     
-                    # --- CRITICAL FIX ---
-                    # When a new analysis finishes, FORCE the session state key for filters to be removed.
-                    # This forces Streamlit to re-initialize the widget using the 'default' (which is All Categories).
+                    # Fix: Force reset the filters by removing the key
                     if "selected_layers" in st.session_state:
                         del st.session_state["selected_layers"]
 
