@@ -107,7 +107,7 @@ if res and res["coords"] == st.session_state["click_coords"]:
 with st.sidebar:
     st.header("Settings")
     walk_time = st.slider(
-        "Walking time in minutes, assuming a speed of 4.5 km/h.", 1, 15, 10
+        "Walking Time (minutes) at 4.5 km/h.", 1, 15, 10
     )
 
     st.divider()
@@ -340,3 +340,4 @@ with col_map:
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
                 status.update(label="❌ Failed", state="error")
+
