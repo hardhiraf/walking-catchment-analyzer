@@ -72,7 +72,6 @@ has_data = False
 pois_data = pd.DataFrame()
 walk_time = 10
 
-# Check if we have results that match the current click
 if res and res["coords"] == st.session_state["click_coords"]:
     has_data = True
     raw_pois = res["pois"]
@@ -132,7 +131,7 @@ col_map, col_dash = st.columns([3, 2])
 # --- RIGHT COLUMN (DASHBOARD) ---
 with col_dash:
 
-    # --- SCENARIO 1: Clicked, but NOT analyzed yet (SHOW BUTTON) ---
+    # SCENARIO 1: Clicked, not analyzed
     if st.session_state["click_coords"] and not has_data:
         st.subheader("📍 Location Selected")
         st.info(
@@ -141,12 +140,11 @@ with col_dash:
 
         st.markdown("Click the button below to generate the isochrone.")
 
-        # THIS IS THE BUTTON THAT WAS MISSING
-        if st.button("🚀 Run Analysis", type="primary", width="stretch"):
+        if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             st.session_state["trigger_calc"] = True
             st.rerun()
 
-    # --- SCENARIO 2: Analysis Complete (SHOW CHARTS) ---
+    # SCENARIO 2: Analysis Complete
     elif has_data:
         st.subheader("📊 Amenities Breakdown")
 
@@ -195,7 +193,7 @@ with col_dash:
         m1.metric("Isochrone Area", f"{area_sq_km:.2f} km²")
         m2.metric("Street Network Length", f"{total_length_km:.2f} km")
 
-    # --- SCENARIO 3: No Click Yet (SHOW INSTRUCTIONS) ---
+    # SCENARIO 3: No Click
     else:
         st.markdown(
             """
@@ -214,10 +212,9 @@ with col_map:
     else:
         map_center = [-6.1754, 106.8272]
 
-    # Initialize map with tiles=None
+    # Initialize map
     m = folium.Map(location=map_center, zoom_start=15, tiles=None)
 
-    # Basemaps (Dark is first/default)
     folium.TileLayer(tiles="OpenStreetMap", name="Street Map", control=True).add_to(m)
     folium.TileLayer(tiles="CartoDB positron", name="Light Map", control=True).add_to(m)
     folium.TileLayer(tiles="CartoDB dark_matter", name="Dark Map", control=True).add_to(
@@ -290,7 +287,6 @@ with col_map:
 
     folium.LayerControl(position="topright").add_to(m)
 
-    # Render Map
     output = st_folium(m, height=750, width=None, returned_objects=["last_clicked"])
 
     # Handle Clicks
@@ -299,11 +295,10 @@ with col_map:
         new_lon = output["last_clicked"]["lng"]
         if st.session_state["click_coords"] != (new_lat, new_lon):
             st.session_state["click_coords"] = (new_lat, new_lon)
-            # Reset analysis so the button appears again
             st.session_state["analysis_results"] = None
             st.rerun()
 
-    # Calculation Logic
+    # Trigger Calculation
     if st.session_state.get("trigger_calc", False):
         lat, lon = st.session_state["click_coords"]
         st.session_state["trigger_calc"] = False
@@ -327,6 +322,12 @@ with col_map:
                 }
                 pois = get_amenities(query_poly, tags, lat, lon)
 
+                # --- NEW FILTERING LOGIC ---
+                # Check if amenities are strictly inside the polygon
+                if pois is not None and not pois.empty:
+                    # Filter: Keep only points whose centroids are within the query polygon
+                    pois = pois[pois.geometry.centroid.within(query_poly)]
+
                 st.session_state["analysis_results"] = {
                     "coords": (lat, lon),
                     "walk_time": walk_time,
@@ -339,5 +340,3 @@ with col_map:
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
                 status.update(label="❌ Failed", state="error")
-
-
